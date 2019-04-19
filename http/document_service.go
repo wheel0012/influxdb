@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/influxdata/influxdb"
 	pcontext "github.com/influxdata/influxdb/context"
@@ -19,6 +20,8 @@ type DocumentBackend struct {
 
 	DocumentService influxdb.DocumentService
 	LabelService    influxdb.LabelService
+	KeyValueLog     influxdb.KeyValueLog
+	timeGenerator   timeGenerator
 }
 
 // NewDocumentBackend returns a new instance of DocumentBackend.
@@ -27,6 +30,7 @@ func NewDocumentBackend(b *APIBackend) *DocumentBackend {
 		Logger:          b.Logger.With(zap.String("handler", "document")),
 		DocumentService: b.DocumentService,
 		LabelService:    b.LabelService,
+		KeyValueLog:     b.KeyValueLog,
 	}
 }
 
@@ -38,6 +42,8 @@ type DocumentHandler struct {
 
 	DocumentService influxdb.DocumentService
 	LabelService    influxdb.LabelService
+	KeyValueLog     influxdb.KeyValueLog
+	timeGenerator   timeGenerator
 }
 
 const (
@@ -56,6 +62,8 @@ func NewDocumentHandler(b *DocumentBackend) *DocumentHandler {
 
 		DocumentService: b.DocumentService,
 		LabelService:    b.LabelService,
+		KeyValueLog:     b.KeyValueLog,
+		timeGenerator:   b.timeGenerator,
 	}
 
 	h.HandlerFunc("POST", documentsPath, h.handlePostDocument)
@@ -72,11 +80,13 @@ func NewDocumentHandler(b *DocumentBackend) *DocumentHandler {
 }
 
 type documentResponse struct {
-	Links map[string]string `json:"links"`
+	Links     map[string]string `json:"links"`
+	CreatedAt string            `json:"createAt"`
+	UpdatedAt string            `json:"updatedAt"`
 	*influxdb.Document
 }
 
-func newDocumentResponse(ns string, d *influxdb.Document) *documentResponse {
+func newDocumentResponse(ns string, d *influxdb.Document, createdAt, lastUpdatedAt time.Time) *documentResponse {
 	if d.Labels == nil {
 		d.Labels = []*influxdb.Label{}
 	}
@@ -84,7 +94,9 @@ func newDocumentResponse(ns string, d *influxdb.Document) *documentResponse {
 		Links: map[string]string{
 			"self": fmt.Sprintf("/api/v2/documents/%s/%s", ns, d.ID),
 		},
-		Document: d,
+		CreatedAt: timeToStr(createdAt),
+		UpdatedAt: timeToStr(lastUpdatedAt),
+		Document:  d,
 	}
 }
 
@@ -92,10 +104,10 @@ type documentsResponse struct {
 	Documents []*documentResponse `json:"documents"`
 }
 
-func newDocumentsResponse(ns string, docs []*influxdb.Document) *documentsResponse {
+func newDocumentsResponse(ns string, docs []*influxdb.Document, createdAts, lastUpdatedAts []time.Time) *documentsResponse {
 	ds := make([]*documentResponse, 0, len(docs))
-	for _, doc := range docs {
-		ds = append(ds, newDocumentResponse(ns, doc))
+	for i, doc := range docs {
+		ds = append(ds, newDocumentResponse(ns, doc, createdAts[i], lastUpdatedAts[i]))
 	}
 
 	return &documentsResponse{
@@ -140,7 +152,16 @@ func (h *DocumentHandler) handlePostDocument(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := encodeResponse(ctx, w, http.StatusCreated, newDocumentResponse(req.Namespace, req.Document)); err != nil {
+	now := h.timeGenerator.Now()
+
+	if err := addLog(ctx, h.KeyValueLog, influxdb.DocumentsResourceType, req.Document.ID,
+		influxdb.OpCreateDocument, now,
+	); err != nil {
+		EncodeError(ctx, err, w)
+		return
+	}
+
+	if err := encodeResponse(ctx, w, http.StatusCreated, newDocumentResponse(req.Namespace, req.Document, now, now)); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}
@@ -230,8 +251,13 @@ func (h *DocumentHandler) handleGetDocuments(w http.ResponseWriter, r *http.Requ
 		EncodeError(ctx, err, w)
 		return
 	}
+	createdAts, lastUpdatedAts := make([]time.Time, len(ds)), make([]time.Time, len(ds))
+	for i, d := range ds {
+		createdAt, lastUpdatedAt, _ := getLogCreatedUpdated(ctx, h.KeyValueLog, d.ID, influxdb.DocumentsResourceType)
+		createdAts[i], lastUpdatedAts[i] = createdAt, lastUpdatedAt
+	}
 
-	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentsResponse(req.Namespace, ds)); err != nil {
+	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentsResponse(req.Namespace, ds, createdAts, lastUpdatedAts)); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}
@@ -394,7 +420,9 @@ func (h *DocumentHandler) handleGetDocument(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentResponse(namspace, d)); err != nil {
+	createdAt, lastUpdatedAt, _ := getLogCreatedUpdated(ctx, h.KeyValueLog, d.ID, influxdb.DocumentsResourceType)
+
+	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentResponse(namspace, d, createdAt, lastUpdatedAt)); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}
@@ -460,6 +488,14 @@ func (h *DocumentHandler) handleDeleteDocument(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := s.DeleteDocuments(ctx, influxdb.AuthorizedWhereID(a, req.ID)); err != nil {
+		EncodeError(ctx, err, w)
+		return
+	}
+
+	now := h.timeGenerator.Now()
+	if err := addLog(ctx, h.KeyValueLog, influxdb.DocumentsResourceType, req.ID,
+		influxdb.OpDeleteDocuments, now,
+	); err != nil {
 		EncodeError(ctx, err, w)
 		return
 	}
@@ -547,8 +583,16 @@ func (h *DocumentHandler) handlePutDocument(w http.ResponseWriter, r *http.Reque
 	}
 
 	d := ds[0]
+	now := time.Now()
+	if err := addLog(ctx, h.KeyValueLog, influxdb.DocumentsResourceType, d.ID,
+		influxdb.OpUpdateDocument, now,
+	); err != nil {
+		EncodeError(ctx, err, w)
+		return
+	}
+	createdAt, lastUpdatedAt, _ := getLogCreatedUpdated(ctx, h.KeyValueLog, d.ID, influxdb.DocumentsResourceType)
 
-	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentResponse(req.Namespace, d)); err != nil {
+	if err := encodeResponse(ctx, w, http.StatusOK, newDocumentResponse(req.Namespace, d, createdAt, lastUpdatedAt)); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}

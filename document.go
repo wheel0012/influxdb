@@ -4,6 +4,13 @@ import (
 	"context"
 )
 
+// ops for dashboard service.
+const (
+	OpCreateDocument  = "OpCreateDocument"
+	OpUpdateDocument  = "UpdateDocument"
+	OpDeleteDocuments = "DeleteDocuments"
+)
+
 // ErrDocumentNotFound is the error msg for a missing document.
 const ErrDocumentNotFound = "document not found"
 

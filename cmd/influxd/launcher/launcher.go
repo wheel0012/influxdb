@@ -44,7 +44,7 @@ import (
 	_ "github.com/influxdata/influxdb/tsdb/tsm1" // needed for tsm1
 	"github.com/influxdata/influxdb/vault"
 	pzap "github.com/influxdata/influxdb/zap"
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 	jaegerconfig "github.com/uber/jaeger-client-go/config"
@@ -420,6 +420,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		orgSvc           platform.OrganizationService             = m.kvService
 		authSvc          platform.AuthorizationService            = m.kvService
 		userSvc          platform.UserService                     = m.kvService
+		kvLogSvc         platform.KeyValueLog                     = m.kvService
 		variableSvc      platform.VariableService                 = m.kvService
 		bucketSvc        platform.BucketService                   = m.kvService
 		sourceSvc        platform.SourceService                   = m.kvService
@@ -584,6 +585,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		// Wrap the BucketService in a storage backed one that will ensure deleted buckets are removed from the storage engine.
 		BucketService:                   storage.NewBucketService(bucketSvc, m.engine),
 		SessionService:                  sessionSvc,
+		KeyValueLog:                     kvLogSvc,
 		UserService:                     userSvc,
 		OrganizationService:             orgSvc,
 		UserResourceMappingService:      userResourceSvc,

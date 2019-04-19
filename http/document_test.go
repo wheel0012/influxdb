@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/influxdata/influxdb"
 	pcontext "github.com/influxdata/influxdb/context"
@@ -117,6 +118,8 @@ var (
 				"links": {
 					"self": "/api/v2/documents/template/020f755c3c082010"
 				},
+				"createAt": "0001-01-01T00:00:00Z",
+				"updatedAt": "0001-01-01T00:00:00Z",
 				"content": "content1",
 				"labels": [
 					   {
@@ -135,6 +138,8 @@ var (
 				"links": {
 					"self": "/api/v2/documents/template/020f755c3c082011"
 				},
+				"createAt": "0001-01-01T00:00:00Z",
+				"updatedAt": "0001-01-01T00:00:00Z",
 				"content": "content2", 
 				"meta": {
 					"name": "doc2"
@@ -178,6 +183,11 @@ func NewMockDocumentBackend() *DocumentBackend {
 
 		DocumentService: mock.NewDocumentService(),
 		LabelService:    mock.NewLabelService(),
+		timeGenerator: timeGenerator{
+			UseFake:   true,
+			FakeValue: time.Date(2006, 5, 24, 1, 2, 3, 4, time.UTC),
+		},
+		KeyValueLog: new(mock.KeyValueLog),
 	}
 }
 
@@ -729,6 +739,7 @@ func TestService_handleGetDocuments(t *testing.T) {
 			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
 				t.Errorf("%q. handleGetDocuments() = ***%s***", tt.name, diff)
 			}
+			documentBackend.KeyValueLog.(*mock.KeyValueLog).Empty()
 		})
 	}
 }
@@ -823,6 +834,8 @@ func TestService_handlePostDocuments(t *testing.T) {
 					"links": {
 						"self": "/api/v2/documents/template/020f755c3c082014"
 					},
+					"createAt": "2006-05-24T01:02:03Z",
+					"updatedAt": "2006-05-24T01:02:03Z",
 					"meta": {
 						"name": "doc5"
 					}}`,
@@ -866,6 +879,8 @@ func TestService_handlePostDocuments(t *testing.T) {
 					"links": {
 						"self": "/api/v2/documents/template/020f755c3c082015"
 					},
+					"createAt": "2006-05-24T01:02:03Z",
+					"updatedAt": "2006-05-24T01:02:03Z",
 					"labels": [{
             			"id": "020f755c3c082300",
             			"name": "l1"
@@ -911,6 +926,7 @@ func TestService_handlePostDocuments(t *testing.T) {
 			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); !eq {
 				t.Errorf("%q. handlePostDocument() = ***%s***", tt.name, diff)
 			}
+			documentBackend.KeyValueLog.(*mock.KeyValueLog).Empty()
 		})
 	}
 }

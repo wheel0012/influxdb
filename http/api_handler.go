@@ -51,6 +51,7 @@ type APIBackend struct {
 	QueryEventRecorder metric.EventRecorder
 
 	PointsWriter                    storage.PointsWriter
+	KeyValueLog                     influxdb.KeyValueLog
 	AuthorizationService            influxdb.AuthorizationService
 	BucketService                   influxdb.BucketService
 	SessionService                  influxdb.SessionService
