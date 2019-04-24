@@ -161,7 +161,7 @@ class TimeSeries extends Component<Props & WithRouterProps, State> {
         return
       }
 
-      if (get(error, 'xhr.status') === RATE_LIMIT_ERROR_STATUS) {
+      if (get(error, 'status') === RATE_LIMIT_ERROR_STATUS) {
         notify(queryLimitReached())
       }
 
